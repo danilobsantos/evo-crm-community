@@ -90,8 +90,9 @@ In development, `evo-core` pulls the public image
 image used by `prod-test` and `swarm`. No local Go build is required.
 
 To develop the Core locally instead, swap the `image:` line for a `build:`
-against `./evo-ai-core-service-community` (a community modfile is needed because
-the default `go.mod` references the enterprise licensing sibling, which only
+against `./evo-ai-core-service-community` (a separate community Go module file —
+e.g. `go.community.mod`, selected via `-modfile` — is needed because the default
+`go.mod` references the enterprise licensing sibling, which only
 exists in enterprise checkouts).
 
 ## Production (Docker Swarm)
