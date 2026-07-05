@@ -9,8 +9,22 @@ if [[ ! -d "$CRM_DIR" || ! -d "$AUTH_DIR" ]]; then
   exit 2
 fi
 
-crm_versions=$(ls "$CRM_DIR" | grep -E '^[0-9]{14}_' | sed -E 's/^([0-9]{14})_.*$/\1/' | sort -u)
-auth_versions=$(ls "$AUTH_DIR" | grep -E '^[0-9]{14}_' | sed -E 's/^([0-9]{14})_.*$/\1/' | sort -u)
+# `|| true` keeps pipefail from silently killing the script when a dir has no
+# matching migration files (grep exits 1); emptiness is handled explicitly below.
+crm_versions=$(ls "$CRM_DIR" | grep -E '^[0-9]{14}_' | sed -E 's/^([0-9]{14})_.*$/\1/' | sort -u || true)
+auth_versions=$(ls "$AUTH_DIR" | grep -E '^[0-9]{14}_' | sed -E 's/^([0-9]{14})_.*$/\1/' | sort -u || true)
+
+if [[ -z "$crm_versions" ]]; then
+  echo "ERROR: no migration files matching '<14-digit version>_*.rb' in $CRM_DIR." >&2
+  echo "Did the submodule checkout succeed? (git submodule update --init --recursive)" >&2
+  exit 2
+fi
+
+if [[ -z "$auth_versions" ]]; then
+  echo "ERROR: no migration files matching '<14-digit version>_*.rb' in $AUTH_DIR." >&2
+  echo "Did the submodule checkout succeed? (git submodule update --init --recursive)" >&2
+  exit 2
+fi
 
 collisions=$(comm -12 <(echo "$crm_versions") <(echo "$auth_versions") || true)
 

@@ -14,11 +14,22 @@ From the umbrella root:
 ./scripts/check_migration_collision.sh
 ```
 
-Exit codes: `0` no collision · `1` collision found · `2` unexpected repo state.
+Exit codes: `0` no collision · `1` collision found · `2` unexpected repo state (missing dirs or no migration files — usually an un-initialized submodule).
+
+### Reproducing CI behavior locally
+
+CI (`actions/checkout@v4` with `submodules: recursive`) reads the submodule SHAs **pinned in the umbrella tree**, not the tip of each submodule branch. If your working tree has newer submodule commits than what the umbrella records, the script will disagree with CI. To reproduce CI exactly:
+
+```sh
+git submodule update --init --recursive   # forces checkout of the pinned SHAs
+./scripts/check_migration_collision.sh
+```
+
+If this diverges from a run against your working tree, someone has an un-bumped submodule pointer somewhere and CI will be the source of truth.
 
 ## How to fix when it flags
 
-Renumber the offending migration in the repo with **fewer** migrations (auth, today) by adding 1 second to the timestamp:
+Renumber the migration on the side that has **not** been applied to any live deployment yet (typically the one still confined to a feature branch — never one already run against a prod/staging DB). Bumping the timestamp by 1 second is enough:
 
 ```sh
 cd evo-auth-service-community
@@ -42,9 +53,11 @@ If you migrated **auth first** on a local DB before this guard existed, `schema_
 # Inside the CRM container:
 bundle exec rails runner 'puts ActiveRecord::Base.connection.column_exists?(:messages, :source)'
 # If false AND schema_migrations already contains 20260622120000:
-psql "$DATABASE_URL" -c "DELETE FROM schema_migrations WHERE version = '20260622120000';"
+bundle exec rails runner "ActiveRecord::Base.connection.execute(\"DELETE FROM schema_migrations WHERE version = '20260622120000'\")"
 bundle exec rails db:migrate
 ```
+
+(`rails runner` is used instead of `psql` because the CRM image is not guaranteed to ship the Postgres client.)
 
 This is idempotent — safe to run whether or not `messages.source` already exists. Production is unaffected (never shared the DB).
 
@@ -52,8 +65,8 @@ This is idempotent — safe to run whether or not `messages.source` already exis
 
 To reduce future collisions, prefer these hour ranges for new migrations:
 
-- CRM: `HH=12` (`YYYYMMDD_120000_*`)
-- auth: `HH=14` (`YYYYMMDD_140000_*`)
+- CRM: `HH=12` (`YYYYMMDD120000_*`)
+- auth: `HH=14` (`YYYYMMDD140000_*`)
 
 The guard flags collisions regardless of hour — this is just a soft rule to make them less likely.
 
