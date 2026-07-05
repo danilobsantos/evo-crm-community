@@ -47,19 +47,34 @@ git add db/schema.rb
 
 ## Recovery — historical collision `20260622120000`
 
-If you migrated **auth first** on a local DB before this guard existed, `schema_migrations` will contain `20260622120000` while the CRM `messages.source` column is missing. Fix:
+If you migrated **auth first** on a DB before this guard existed, `schema_migrations` will contain `20260622120000` while the CRM `messages.source` column is missing. Symptom: the CRM container crashloops at boot with `Undeclared attribute type for enum 'source'`.
+
+All commands run DB-side, from the deployment directory. Do NOT use `rails runner` inside the CRM container for this: in production it eager-loads the app, which loads the broken `Message` model and crashes with the very error you are trying to fix (`rails db:migrate` is safe — rake tasks skip eager loading). The `psql` client is always available in the `postgres` container.
+
+Diagnose (0 rows = bitten; seeing `source` means the problem is something else — stop here):
 
 ```sh
-# Inside the CRM container:
-bundle exec rails runner 'puts ActiveRecord::Base.connection.column_exists?(:messages, :source)'
-# If false AND schema_migrations already contains 20260622120000:
-bundle exec rails runner "ActiveRecord::Base.connection.execute(\"DELETE FROM schema_migrations WHERE version = '20260622120000'\")"
-bundle exec rails db:migrate
+docker compose exec postgres psql -U postgres -d evo_community -c \
+  "SELECT column_name FROM information_schema.columns WHERE table_name='messages' AND column_name='source';"
 ```
 
-(`rails runner` is used instead of `psql` because the CRM image is not guaranteed to ship the Postgres client.)
+Fix:
 
-This is idempotent — safe to run whether or not `messages.source` already exists. Production is unaffected (never shared the DB).
+```sh
+# 1. Remove the poisoned row that makes Rails skip the CRM migration
+docker compose exec postgres psql -U postgres -d evo_community -c \
+  "DELETE FROM schema_migrations WHERE version = '20260622120000';"
+
+# 2. Re-run CRM migrations (works even while the app is crashlooping)
+docker compose run --rm evo-crm bundle exec rails db:migrate
+
+# 3. Bring the CRM back up
+docker compose restart evo-crm evo-crm-sidekiq
+```
+
+Substitute `postgres` / `evo_community` if you customized `POSTGRES_USERNAME` / `POSTGRES_DATABASE` in `.env`. Run the diagnose step first — on a healthy DB, deleting the row and re-migrating would fail on the duplicate column.
+
+From v1.0.0-rc7 on, the CRM migration `20260705120000_heal_messages_source_after_version_collision` performs this repair automatically on upgrade.
 
 ## Convention (recommended, not enforced)
 
